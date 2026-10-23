@@ -1,0 +1,6 @@
+{
+  "name": "claude-pins",
+  "owner": { "name": "binerbuddy" },
+  "description": "Pin Claude Code replies to a side pane",
+  "plugins": [{ "name": "pins", "source": "./" }]
+}

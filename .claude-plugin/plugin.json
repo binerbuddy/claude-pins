@@ -1,0 +1,9 @@
+{
+  "name": "pins",
+  "version": "0.1.0",
+  "description": "Pin assistant replies to a side pane so open questions don't get buried",
+  "author": { "name": "binerbuddy" },
+  "repository": "https://github.com/binerbuddy/claude-pins",
+  "license": "MIT",
+  "types": "./types/index.d.ts"
+}
