@@ -1,0 +1,173 @@
+#!/bin/bash
+
+# Pins for Codex. Codex plugins can't draw panes, so the Stop hook logs each
+# reply and a viewer in a herdr split pins, marks done and rereads them.
+#
+#   pins hook              Stop hook: log the reply on stdin (JSON)
+#   pins prompt            UserPromptSubmit hook: "$pins" opens the viewer
+#   pins open              open the viewer in a herdr split beside this pane
+#   pins view <session>    the viewer itself (fzf)
+#   pins list|show|toggle|mode ...   the viewer's helpers
+
+set -u
+
+DIR="${XDG_STATE_HOME:-$HOME/.local/state}/codex-pins"
+SELF=$(readlink -f "$0")
+ROOT=$(cd "$(dirname "$SELF")/../.." && pwd)
+
+mkdir -p "$DIR"
+
+# Codex runs hooks and tool commands in its shared app-server daemon, whose
+# HERDR_PANE_ID is the pane it happened to start in. So the session comes from
+# CODEX_SESSION_ID (set for tool commands), else the newest one logged...
+session_here() {
+  if [[ -n ${CODEX_SESSION_ID:-} ]]; then
+    echo "$CODEX_SESSION_ID"
+  else
+    find "$DIR" -maxdepth 1 -name '*.jsonl' -printf '%T@ %f\n' | sort -rn | head -1 | sed 's/^[^ ]* //; s/\.jsonl$//'
+  fi
+}
+
+# ...and the pane to split is the focused Codex pane: the one $pins was typed in.
+pane_here() {
+  herdr pane list 2>/dev/null |
+    jq -r '[.. | objects | select(.pane_id? and .focused == true and .agent == "codex") | .pane_id] | first // empty'
+}
+
+state_of() {
+  cat "$DIR/$1.state.json" 2>/dev/null || echo '{"pinned":[],"done":[]}'
+}
+
+cmd_hook() {
+  local input sid
+  input=$(cat)
+  printf '%s\n' "$ROOT" >"$DIR/root"
+  sid=$(jq -r '.session_id // empty' <<<"$input")
+
+  if [[ -n $sid ]] && jq -e '.last_assistant_message | type == "string" and test("\\S")' <<<"$input" >/dev/null; then
+    jq -c --argjson at "$(date +%s)" \
+      '{id: (.turn_id // ($at | tostring)), text: .last_assistant_message, at: $at}' <<<"$input" >>"$DIR/$sid.jsonl"
+    # An open viewer reloads to show the new reply.
+    if [[ -S $DIR/$sid.sock ]]; then
+      curl -s --max-time 1 --unix-socket "$DIR/$sid.sock" -X POST http://localhost \
+        -d "reload('$SELF' list $sid)" >/dev/null 2>&1
+    fi
+  fi
+
+  # Stop wants JSON on stdout.
+  echo '{}'
+}
+
+# One line a reply: id, mark, age, first line. Newest first; the pinned view
+# shows open pins before done ones.
+cmd_list() {
+  local sid=$1 mode
+  mode=$(cat "$DIR/$sid.mode" 2>/dev/null || echo all)
+  [[ -f $DIR/$sid.jsonl ]] || return 0
+  jq -rs --argjson st "$(state_of "$sid")" --arg mode "$mode" --argjson now "$(date +%s)" '
+    map(.id as $i | . + {pinned: ($st.pinned | index($i) != null), done: ($st.done | index($i) != null)})
+    | reverse
+    | if $mode == "pinned" then map(select(.pinned)) | sort_by(.done) else . end
+    | .[]
+    | [ .id,
+        (if .done then "✓ " elif .pinned then "📌" else "  " end),
+        (((($now - .at) / 60) | floor) as $m
+          | if $m < 1 then "now" elif $m < 60 then "\($m)m" else "\(($m / 60) | floor)h" end),
+        ((.text | split("\n") | map(select(test("\\S"))) | .[0] // "")[0:120]) ]
+    | @tsv' "$DIR/$sid.jsonl"
+}
+
+cmd_show() {
+  local text
+  text=$(jq -rs --arg id "$2" 'map(select(.id == $id)) | last | .text // ""' "$DIR/$1.jsonl")
+  if command -v glow >/dev/null; then
+    glow -s dark -w "${FZF_PREVIEW_COLUMNS:-80}" - <<<"$text"
+  elif command -v bat >/dev/null; then
+    bat -l md --color=always --style=plain --paging=never <<<"$text"
+  else
+    printf '%s\n' "$text"
+  fi
+}
+
+# toggle <session> pinned|done <id>. Unpinning also clears done.
+cmd_toggle() {
+  local sid=$1 field=$2 id=$3 tmp
+  tmp=$(mktemp "$DIR/.state.XXXXXX")
+  state_of "$sid" | jq --arg f "$field" --arg id "$id" '
+    if (.[$f] | index($id)) then .[$f] -= [$id] else .[$f] += [$id] end
+    | if $f == "pinned" and (.pinned | index($id) | not) then .done -= [$id] else . end
+    | if $f == "done" and (.done | index($id)) then .pinned = (.pinned - [$id] + [$id]) else . end' >"$tmp" &&
+    mv "$tmp" "$DIR/$sid.state.json"
+}
+
+cmd_mode() {
+  local sid=$1 mode
+  mode=$(cat "$DIR/$sid.mode" 2>/dev/null)
+  if [[ $mode == pinned ]]; then echo all; else echo pinned; fi >"$DIR/$sid.mode"
+}
+
+cmd_view() {
+  local sid=$1 sock="$DIR/$1.sock" list="'$SELF' list $1"
+  # Open on the pins when there are any.
+  if state_of "$sid" | jq -e '.pinned | length > 0' >/dev/null; then echo pinned; else echo all; fi >"$DIR/$sid.mode"
+  rm -f "$sock"
+
+  cmd_list "$sid" | fzf \
+    --listen="$sock" \
+    --delimiter=$'\t' --with-nth=2.. --no-sort --layout=reverse --ansi \
+    --border-label=' Pins (codex) ' --border=rounded \
+    --header='enter pin · ctrl-d done · tab pinned/all · ctrl-r reload · esc close' \
+    --preview="'$SELF' show $sid {1}" --preview-window='down,70%,wrap' \
+    --bind="enter:execute-silent('$SELF' toggle $sid pinned {1})+reload($list)" \
+    --bind="ctrl-d:execute-silent('$SELF' toggle $sid done {1})+reload($list)" \
+    --bind="tab:execute-silent('$SELF' mode $sid)+reload($list)" \
+    --bind="ctrl-r:reload($list)" \
+    --bind='esc:abort' >/dev/null
+  rm -f "$sock"
+}
+
+# Hooks run outside the sandbox, where the herdr socket is reachable, so the
+# prompt "$pins" opens the viewer here and is dropped: no model turn.
+cmd_prompt() {
+  local input sid out
+  input=$(cat)
+  jq -e '.prompt | test("^\\s*\\[?\\$pins\\b")' <<<"$input" >/dev/null || exit 0
+  sid=$(jq -r '.session_id // empty' <<<"$input")
+  out=$(CODEX_SESSION_ID=$sid cmd_open 2>&1)
+  jq -n --arg r "$out" '{decision: "block", reason: $r}'
+}
+
+cmd_open() {
+  local sid target pane
+  sid=$(session_here)
+  [[ -n $sid && -f $DIR/$sid.jsonl ]] || { echo "No Codex replies logged yet: finish a turn first." >&2; exit 1; }
+  if [[ -S $DIR/$sid.sock ]]; then
+    echo "The Pins viewer is already open for this session."
+    exit 0
+  fi
+  target=${PINS_PANE:-$(pane_here)}
+  if [[ -z $target ]]; then
+    echo "No focused Codex pane in herdr. Run this in a terminal instead: '$SELF' view $sid" >&2
+    exit 1
+  fi
+  pane=$(herdr pane split "$target" --direction right --ratio 0.4 --focus 2>&1 |
+    jq -r '.result.pane.pane_id // empty' 2>/dev/null)
+  [[ -n $pane ]] || { echo "herdr could not split pane $target (sandboxed? the herdr socket needs access)" >&2; exit 1; }
+  herdr pane run "$pane" " exec '$SELF' view $sid" >/dev/null
+  echo "Pins viewer opened."
+}
+
+case "${1:-}" in
+hook) cmd_hook ;;
+prompt) cmd_prompt ;;
+open) cmd_open ;;
+view) cmd_view "$2" ;;
+list) cmd_list "$2" ;;
+show) cmd_show "$2" "$3" ;;
+toggle) cmd_toggle "$2" "$3" "$4" ;;
+mode) cmd_mode "$2" ;;
+*)
+  echo "usage: pins hook|open|view <session>" >&2
+  exit 2
+  ;;
+esac

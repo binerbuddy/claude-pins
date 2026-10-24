@@ -1,0 +1,22 @@
+{
+  "name": "pins",
+  "version": "0.4.0",
+  "description": "Pin Codex replies in a herdr split so open questions don't get buried",
+  "author": { "name": "binerbuddy", "url": "https://github.com/binerbuddy" },
+  "homepage": "https://github.com/binerbuddy/claude-pins",
+  "repository": "https://github.com/binerbuddy/claude-pins",
+  "license": "MIT",
+  "keywords": ["pins", "herdr", "notes"],
+  "skills": "./codex/skills/",
+  "hooks": "./codex/hooks.json",
+  "interface": {
+    "displayName": "Pins",
+    "shortDescription": "Pin replies in a herdr split",
+    "longDescription": "Logs each reply with a Stop hook; $pins opens a viewer in a herdr split to pin, mark done and reread replies. Needs herdr, fzf and jq.",
+    "developerName": "binerbuddy",
+    "category": "Developer Tools",
+    "capabilities": ["Interactive"],
+    "websiteURL": "https://github.com/binerbuddy/claude-pins",
+    "defaultPrompt": ["$pins"]
+  }
+}

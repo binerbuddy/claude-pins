@@ -1,0 +1,27 @@
+{
+  "description": "Log each Codex reply for the Pins viewer; \"$pins\" opens it",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$PLUGIN_ROOT/codex/bin/pins\" hook",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$PLUGIN_ROOT/codex/bin/pins\" prompt",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

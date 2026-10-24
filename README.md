@@ -36,6 +36,31 @@ pane reopens while any pin is still open.
 In the fullscreen layout the pane docks beside the transcript from 110
 columns; on the main screen it opens above the prompt.
 
+## Codex
+
+The same repo is a Codex plugin. Codex plugins can't draw panes, so it works
+differently there:
+
+- A `Stop` hook logs each reply.
+- Send `$pins` to open the viewer in a herdr split beside the Codex pane
+  (the prompt is caught by a hook, so no model turn is spent).
+- In the viewer: enter pins or unpins, ctrl-d marks done, tab switches between
+  pinned and all replies, esc closes. It updates as new replies arrive.
+
+Install:
+
+```
+codex plugin marketplace add binerbuddy/claude-pins
+codex plugin add pins@claude-pins
+```
+
+Approve the plugin's hooks when Codex asks. Needs herdr, fzf and jq; glow or
+bat render the markdown if present. Outside herdr, run the viewer yourself:
+`<plugin root>/codex/bin/pins view <session id>`.
+
+There's no 📌 on replies and no goto in Codex: it has no extension point for
+either.
+
 ## Develop
 
 ```
