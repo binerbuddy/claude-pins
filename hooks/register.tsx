@@ -22,11 +22,20 @@ function openPane($: EngineInterface) {
   return $.ui.open({ id: PANE, title: 'Pins' })
 }
 
-async function addPin($: EngineInterface, id: string, text: string) {
+// Reply blocks as drawn, by transcript row, so /pin can find the row it pins.
+const drawn = new Map<string, string>()
+
+function rowOf(text: string): string | undefined {
+  let found: string | undefined
+  for (const [id, block] of drawn) if (text.includes(block)) found = id
+  return found
+}
+
+async function addPin($: EngineInterface, id: string, text: string, msgId: string | undefined) {
   await change($, list =>
     list.some(p => p.id === id || p.text === text)
       ? list
-      : [...list, { id, text, pinnedAt: Date.now(), isDone: false }],
+      : [...list, { id, text, pinnedAt: Date.now(), isDone: false, ...(msgId ? { msgId } : {}) }],
   )
   await openPane($)
 }
@@ -106,6 +115,18 @@ function fitWidths(natural: number[], room: number): number[] {
   return base.map((b, i) => b + Math.floor((left * (wants[i] ?? 0)) / wantTotal))
 }
 
+// Pins made from the 📌 button before msgId existed carry the row as their id.
+function msgIdOf(pin: Pin): string | undefined {
+  return pin.msgId ?? (pin.id.startsWith('cmd-') ? undefined : pin.id)
+}
+
+async function gotoRow($: EngineInterface, msgId: string) {
+  const deny = await $.ui
+    .scroll({ to: { requestId: msgId }, block: 'start' })
+    .then(r => r.deny, (err: unknown) => String(err))
+  if (deny) await $.ui.toast(`Can't go to that reply: ${deny}`)
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
@@ -134,7 +155,7 @@ export const register: Register = on => {
     const reply = replies[replies.length - n]
     if (!reply) return { text: 'No assistant reply to pin.' }
 
-    await addPin($, `cmd-${Date.now()}`, reply.text)
+    await addPin($, `cmd-${Date.now()}`, reply.text, rowOf(reply.text.trim()))
     return { text: `Pinned: ${firstLine(reply.text)}` }
   })
 
@@ -158,6 +179,7 @@ export const register: Register = on => {
   on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
     const own = await next(e)
     if (e.props.isSummary || e.props.text.trim() === '') return own
+    drawn.set(e.requestId, e.props.text.trim())
 
     const { Box, Button } = $.ui.resolve(e)
     const id = e.requestId
@@ -179,7 +201,7 @@ export const register: Register = on => {
             dimColor
             label={isPinned ? '📌 unpin' : '📌 pin'}
             onPress={() =>
-              isPinned ? void change($, list => list.filter(p => p.id !== id)) : void addPin($, id, text)
+              isPinned ? void change($, list => list.filter(p => p.id !== id)) : void addPin($, id, text, id)
             }
           />
         </Box>
@@ -234,6 +256,15 @@ export const register: Register = on => {
           }
         />
         <Text dimColor>{age(pin.pinnedAt)}</Text>
+        {msgIdOf(pin) && (
+          <Button
+            key={`goto:${pin.id}`}
+            plain
+            dimColor
+            label="goto"
+            onPress={() => void gotoRow($, msgIdOf(pin) ?? '')}
+          />
+        )}
         <Button
           key={`unpin:${pin.id}`}
           plain

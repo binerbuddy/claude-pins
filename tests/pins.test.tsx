@@ -116,3 +116,22 @@ test('the pane draws a table as a grid fitted to its width', async ($, on) => {
   expect(markdowns).toContain('Short version: E1 first.')
   expect(markdowns.some(m => m?.includes('|'))).toBe(false)
 })
+
+test('a pin from the 📌 button has a goto; a failed scroll toasts', async ($, on) => {
+  const store = new Map<string, unknown>()
+  engine(on, store)
+  const toasts: string[] = []
+  on('ui.toast', async (_$, e) => {
+    toasts.push(e.text)
+    return { value: undefined }
+  })
+
+  const reply = await mountReply($)
+  await reply.press({ key: 'pin:msg-1' })
+  const pane = await mountPane($)
+  const id = ((await store.get('pins:sess-1')) as Pin[])[0]?.id
+  expect(await pane.find({ key: `goto:${id}` })).toBeDefined()
+  await pane.press({ key: `goto:${id}` })
+  // The kit has no transcript to scroll, so the press ends in the toast.
+  expect(toasts).toHaveLength(1)
+})
