@@ -5,6 +5,7 @@ import type { Pin } from '../types'
 
 const PANE = 'pins'
 const pins = atom({ plugin: 'pins', key: 'pins' } as const, [] as Pin[])
+const isConfirmingClear = atom({ plugin: 'pins', key: 'isConfirmingClear' } as const, false)
 
 // Pins persist per session in $.store, so a restart or --resume brings them back.
 async function storeKey($: EngineInterface): Promise<string> {
@@ -212,6 +213,7 @@ export const register: Register = on => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Button, Markdown } = $.ui.resolve(e)
     const list = await read($, pins)
+    const isConfirming = await read($, isConfirmingClear)
 
     const GAP = 2
     const table = (head: string[], rows: string[][]) => {
@@ -279,6 +281,39 @@ export const register: Register = on => {
       <Box flexDirection="column" gap={1}>
         {list.length === 0 && (
           <Text dimColor>Nothing pinned. Hover a reply and press 📌, or run /pin.</Text>
+        )}
+        {list.length > 0 && (
+          <Box flexDirection="row" justifyContent="flex-end" gap={1}>
+            {isConfirming ? (
+              <>
+                <Text dimColor>Clear all {list.length}?</Text>
+                <Button
+                  key="clear-all:yes"
+                  plain
+                  label="yes"
+                  onPress={async () => {
+                    await change($, () => [])
+                    await update($, isConfirmingClear, () => false)
+                  }}
+                />
+                <Button
+                  key="clear-all:no"
+                  plain
+                  dimColor
+                  label="no"
+                  onPress={() => void update($, isConfirmingClear, () => false)}
+                />
+              </>
+            ) : (
+              <Button
+                key="clear-all"
+                plain
+                dimColor
+                label="clear all"
+                onPress={() => void update($, isConfirmingClear, () => true)}
+              />
+            )}
+          </Box>
         )}
         {open.map(pin => (
           <Box flexDirection="column">

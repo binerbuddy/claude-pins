@@ -135,3 +135,21 @@ test('a pin from the 📌 button has a goto; a failed scroll toasts', async ($, 
   // The kit has no transcript to scroll, so the press ends in the toast.
   expect(toasts).toHaveLength(1)
 })
+
+test('clear all asks first, then removes every pin', async ($, on) => {
+  const store = new Map<string, unknown>()
+  engine(on, store)
+
+  const reply = await mountReply($)
+  await reply.press({ key: 'pin:msg-1' })
+  const pane = await mountPane($)
+
+  await pane.press({ key: 'clear-all' })
+  await pane.press({ key: 'clear-all:no' })
+  expect(store.get('pins:sess-1')).toHaveLength(1)
+
+  await pane.press({ key: 'clear-all' })
+  await pane.press({ key: 'clear-all:yes' })
+  expect(store.get('pins:sess-1')).toEqual([])
+  expect(await pane.find({ key: 'clear-all' })).toBeUndefined()
+})

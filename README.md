@@ -27,7 +27,8 @@ claude plugin install pins --marketplace binerbuddy/claude-pins
   `/pins clear all` removes every pin.
 
 In the pane each pin shows the full reply with `[ ]` to mark it done,
-`goto` to scroll the transcript back to the original reply, and `unpin`. Done pins collapse to one line under "Done (n)".
+`goto` to scroll the transcript back to the original reply, and `unpin`.
+`clear all` at the top removes every pin, after a yes/no. Done pins collapse to one line under "Done (n)".
 
 Pins are kept per session: a restart or `--resume` brings them back, and the
 pane reopens while any pin is still open.
