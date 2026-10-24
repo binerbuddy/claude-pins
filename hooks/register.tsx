@@ -43,6 +43,69 @@ function age(ms: number): string {
   return `${Math.floor(min / 60)}h`
 }
 
+// Markdown sizes a table to the whole terminal, so in the narrower pane each
+// row wraps into a mess. The pane draws tables itself, fitted to its width.
+type Block = { kind: 'md'; text: string } | { kind: 'table'; head: string[]; rows: string[][] }
+
+const DELIMITER = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/
+
+function cells(line: string): string[] {
+  let s = line.trim()
+  if (s.startsWith('|')) s = s.slice(1)
+  if (s.endsWith('|') && !s.endsWith('\\|')) s = s.slice(0, -1)
+  return s.split(/(?<!\\)\|/).map(c => c.trim().replace(/\\\|/g, '|'))
+}
+
+function blocks(text: string): Block[] {
+  const lines = text.split('\n')
+  const out: Block[] = []
+  let md: string[] = []
+  let inFence = false
+  const flush = () => {
+    if (md.join('').trim() !== '') out.push({ kind: 'md', text: md.join('\n').trim() })
+    md = []
+  }
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? ''
+    if (/^\s*(```|~~~)/.test(line)) inFence = !inFence
+    const next = lines[i + 1] ?? ''
+    if (!inFence && line.includes('|') && next.includes('|') && DELIMITER.test(next)) {
+      flush()
+      const head = cells(line)
+      const rows: string[][] = []
+      for (i += 2; lines[i]?.includes('|') && lines[i]?.trim() !== ''; i++) {
+        const row = cells(lines[i] ?? '')
+        rows.push(head.map((_, j) => row[j] ?? ''))
+      }
+      i--
+      out.push({ kind: 'table', head, rows })
+      continue
+    }
+    md.push(line)
+  }
+  flush()
+  return out
+}
+
+// Width a cell's text takes once its inline markdown is drawn.
+function shownLength(cell: string): number {
+  return cell.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/\*\*|__|`/g, '').length
+}
+
+// Natural widths when they fit; otherwise each column keeps a small minimum and
+// the rest of the room goes out in proportion to how much more each wants.
+function fitWidths(natural: number[], room: number): number[] {
+  const total = natural.reduce((a, b) => a + b, 0)
+  if (total <= room) return natural
+  const base = natural.map(n => Math.min(n, 6))
+  const left = Math.max(0, room - base.reduce((a, b) => a + b, 0))
+  const wants = natural.map((n, i) => n - (base[i] ?? 0))
+  const wantTotal = wants.reduce((a, b) => a + b, 0)
+  if (wantTotal === 0) return base
+  return base.map((b, i) => b + Math.floor((left * (wants[i] ?? 0)) / wantTotal))
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
@@ -127,6 +190,36 @@ export const register: Register = on => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Button, Markdown } = $.ui.resolve(e)
     const list = await read($, pins)
+
+    const GAP = 2
+    const table = (head: string[], rows: string[][]) => {
+      // The border and padding take 4 columns.
+      const room = e.props.bodyColumns - 4 - GAP * (head.length - 1)
+      const natural = head.map((h, j) => Math.max(1, ...[h, ...rows.map(r => r[j] ?? '')].map(shownLength)))
+      const widths = fitWidths(natural, room)
+      const rule = <Text dimColor>{'─'.repeat(widths.reduce((a, b) => a + b, 0) + GAP * (head.length - 1))}</Text>
+      const row = (cols: string[], isHead: boolean) => (
+        <Box flexDirection="row" columnGap={GAP}>
+          {cols.map((c, j) => (
+            <Box width={widths[j]}>
+              <Markdown text={c === '' ? ' ' : isHead ? `**${c}**` : c} />
+            </Box>
+          ))}
+        </Box>
+      )
+      return (
+        <Box flexDirection="column" borderStyle="single" borderDimColor paddingX={1}>
+          {row(head, true)}
+          {rows.flatMap(r => [rule, row(r, false)])}
+        </Box>
+      )
+    }
+
+    const body = (text: string) => (
+      <Box flexDirection="column">
+        {blocks(text).map(b => (b.kind === 'md' ? <Markdown text={b.text} /> : table(b.head, b.rows)))}
+      </Box>
+    )
     const open = list.filter(p => !p.isDone)
     const done = list.filter(p => p.isDone)
 
@@ -159,7 +252,7 @@ export const register: Register = on => {
         {open.map(pin => (
           <Box flexDirection="column">
             {header(pin)}
-            <Markdown key={`md:${pin.id}`} text={pin.text} />
+            {body(pin.text)}
           </Box>
         ))}
         {done.length > 0 && (

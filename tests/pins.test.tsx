@@ -22,13 +22,13 @@ function engine(on: On, store: Map<string, unknown>) {
   })
 }
 
-function mountReply($: Engine) {
+function mountReply($: Engine, text = REPLY) {
   return $.ui.mount({
     plugin: 'pins',
     surface: 'terminal',
     component: 'AssistantMessage',
     requestId: 'msg-1',
-    props: { text: REPLY, isFirstOfReply: true },
+    props: { text, isFirstOfReply: true },
   })
 }
 
@@ -90,4 +90,29 @@ test('pinning the same reply twice keeps one pin', async ($, on) => {
   // Pressing again on a pinned reply unpins it.
   await reply.press({ key: 'pin:msg-1' })
   expect(store.get('pins:sess-1')).toEqual([])
+})
+
+test('the pane draws a table as a grid fitted to its width', async ($, on) => {
+  const store = new Map<string, unknown>()
+  engine(on, store)
+  const text = [
+    'Pick one:',
+    '',
+    '| Id | Request | Recommendation |',
+    '|----|---------|----------------|',
+    '| E1 | A long request that would never fit a fifty column pane on one line | **Do first.** |',
+    '| E2 | Short | Yes |',
+    '',
+    'Short version: E1 first.',
+  ].join('\n')
+  const reply = await mountReply($, text)
+  await reply.press({ key: 'pin:msg-1' })
+
+  const pane = await mountPane($)
+  const markdowns = (await pane.findAll({ type: 'Markdown' })).map(m => m.text)
+  expect(markdowns).toContain('Pick one:')
+  expect(markdowns).toContain('**Request**')
+  expect(markdowns).toContain('**Do first.**')
+  expect(markdowns).toContain('Short version: E1 first.')
+  expect(markdowns.some(m => m?.includes('|'))).toBe(false)
 })
